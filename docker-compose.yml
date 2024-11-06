@@ -1,0 +1,24 @@
+version: '2'
+services:
+  emu2mqtt:
+    build: .
+    container_name: emu2mqtt
+    devices:
+      - /dev/serial/by-id/usb-Rainforest_Automation__Inc._RFA-Z105-2_HW2.7.3_EMU-2-if00:/dev/ttyACM0
+    env_file: emu2mqtt.env
+    environment:
+      - MQTT_PW_FILE=/run/secrets/mqtt_password
+      - TZ=America/Los_Angeles
+    image: emu2mqtt:latest
+    restart: unless-stopped
+    volumes:
+      - /run/udev:/run/udev:ro
+    group_add:
+      - dialout
+    user: 997:997
+    secrets:
+      - mqtt_password
+
+secrets:
+  mqtt_password:
+    file: ./mqttpw.txt
