@@ -176,7 +176,7 @@ mqttc.username_pw_set(args.mqtt_username, mqtt_password)
 mqttc.message_callback_add(args.mqtt_status_topic, on_homeassistant_status)
 mqttc.on_connect = on_connected
 mqttc.will_set("rainforest/status", "offline", args.mqtt_qos)
-mqttc.connect(args.mqtt_server, args.mqtt_port, 15)
+mqttc.connect(args.mqtt_server, args.mqtt_port, 60)
 logging.info("MQTT connecting...")
 
 mqttc.loop_start()
