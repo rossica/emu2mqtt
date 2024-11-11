@@ -7,6 +7,7 @@ import sys
 import signal
 import json
 import argparse
+import re
 
 # Runtime globals
 device_id = None
@@ -34,6 +35,14 @@ def parse_arguments():
     parser.add_argument("--mqtt_qos", help="MQTT QoS", required=False, type=int, choices=[0,1,2], default=0)
     parser.add_argument("serial_port", help="Rainforest EMU-2 serial port, e.g. 'ttyACM0'")
     return parser.parse_args()
+
+def is_substr(desired: str, test: str) -> bool:
+    i = 0
+    while i < len(desired) and i < len(test):
+        if desired[i] != test[i]:
+            return False
+        i += 1
+    return True
 
 def send_discovery():
     device_info = dict()
@@ -107,6 +116,47 @@ def set_current_state(new_state: bool):
         mqttc.publish("rainforest/status", status, args.mqtt_qos)
         currently_online = new_state
 
+def send_update(data: str):
+    global device_id
+    logging.debug("Parsing: " + data)
+    try:
+        xml = ETree.fromstring(data)
+    except:
+        logging.exception("failed to parse XML: " + data)
+        return
+
+    if xml.tag == "InstantaneousDemand":
+        set_current_state(True)
+        device_id = xml.find("DeviceMacId").text
+        demand = int(xml.find("Demand").text, 16)
+        multiplier = int(xml.find("Multiplier").text, 16)
+        divisor = int(xml.find("Divisor").text, 16)
+        digitsRight = int(xml.find("DigitsRight").text, 16)
+        if divisor != 0:
+                mqttc.publish(
+                    "rainforest/instantaneousdemand",
+                    str(round(demand * multiplier / divisor, digitsRight)),
+                    args.mqtt_qos)
+    elif xml.tag == "CurrentSummationDelivered":
+        set_current_state(True)
+        device_id = xml.find("DeviceMacId").text
+        multiplier = int(xml.find("Multiplier").text, 16)
+        divisor = int(xml.find("Divisor").text, 16)
+        delivered = int(xml.find("SummationDelivered").text, 16)
+        delivered *= multiplier
+        delivered /= divisor
+
+        received = int(xml.find("SummationReceived").text, 16)
+        received *= multiplier
+        received /= divisor
+        data = {"delivered":delivered, "received":received}
+
+        mqttc.publish("rainforest/summationdelivered", json.dumps(data), args.mqtt_qos)
+    elif xml.tag == "ConnectionStatus":
+        device_id = xml.find("DeviceMacId").text
+        if xml.find("Status").text == "Rejoining":
+            set_current_state(False)
+
 
 args = parse_arguments()
 logging.basicConfig(
@@ -132,56 +182,49 @@ logging.info("MQTT connecting...")
 mqttc.loop_start()
 mqttc.subscribe(args.mqtt_status_topic, args.mqtt_qos)
 
+data = ""
+tag = ""
+is_parsing_message = False
 while True:
     if conn.in_waiting > 0:
         try:
-            data = conn.read(conn.in_waiting).decode("utf-8")
+            data += conn.read(conn.in_waiting).decode("utf-8")
         except:
             logging.exception("failed to decode")
             continue
-        xml = None
-        retry = 0
-        while retry < 2:
-            try:
-                xml = ETree.fromstring(data)
-                break
-            except:
-                retry += 1
-                time.sleep(0.1)
-                data += conn.read(conn.in_waiting).decode("utf-8")
+        message = ""
+        partial_tag = ""
+        for line in data.splitlines(keepends=True):
+            if is_parsing_message:
+                if re.match(tag, line):
+                    logging.debug("tag end: " + tag)
+                    is_parsing_message = False
+                    message += line
+                    send_update(message)
+                else:
+                    message += line
+            else:
+                m = re.match("<(?P<tag>InstantaneousDemand|CurrentSummationDelivered|ConnectionStatus)>", line)
+                if m != None:
+                    tag = f"</{m.group('tag')}>"
+                    logging.debug("Tag start: " + line.strip())
+                    is_parsing_message = True
+                    message = line
+                elif is_substr("<InstantaneousDemand>", line) or is_substr("<CurrentSummationDelivered>", line) or is_substr("<ConnectionStatus>", line):
+                    logging.debug("Partial tag: " + line)
+                    partial_tag = line
+                    time.sleep(0.05)
+
+        if is_parsing_message:
+            # There's a partially collected message; save for the next iteration
+            logging.debug("partial msg: " + message)
+            data = message
+            time.sleep(0.05)
         else:
-            continue
-        if xml.tag == "InstantaneousDemand":
-            set_current_state(True)
-            device_id = xml.find("DeviceMacId").text
-            demand = int(xml.find("Demand").text, 16)
-            multiplier = int(xml.find("Multiplier").text, 16)
-            divisor = int(xml.find("Divisor").text, 16)
-            digitsRight = int(xml.find("DigitsRight").text, 16)
-            if divisor != 0:
-                    mqttc.publish(
-                        "rainforest/instantaneousdemand",
-                        str(round(demand * multiplier / divisor, digitsRight)),
-                        args.mqtt_qos)
-        elif xml.tag == "CurrentSummationDelivered":
-            set_current_state(True)
-            device_id = xml.find("DeviceMacId").text
-            multiplier = int(xml.find("Multiplier").text, 16)
-            divisor = int(xml.find("Divisor").text, 16)
-            delivered = int(xml.find("SummationDelivered").text, 16)
-            delivered *= multiplier
-            delivered /= divisor
+            # If there was a partial tag at the end of the data, store it for the next iteration
+            # otherwise, this will just assign empty string and clear junk from `data`
+            data = partial_tag
 
-            received = int(xml.find("SummationReceived").text, 16)
-            received *= multiplier
-            received /= divisor
-            data = {"delivered":delivered, "received":received}
-
-            mqttc.publish("rainforest/summationdelivered", json.dumps(data), args.mqtt_qos)
-        elif xml.tag == "ConnectionStatus":
-            device_id = xml.find("DeviceMacId").text
-            if xml.find("Status").text == "Rejoining":
-                set_current_state(False)
         if not initial_discovery and device_id != None:
             send_discovery()
             initial_discovery = True
