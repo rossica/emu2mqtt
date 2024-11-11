@@ -107,6 +107,8 @@ def on_homeassistant_status(client, userdata, message):
 def on_connected(client, userdata, flags, reason_code):
     if reason_code == 0:
         logging.info("MQTT connected!")
+        if device_id != None:
+            send_discovery()
 
 def set_current_state(new_state: bool):
     global currently_online
