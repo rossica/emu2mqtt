@@ -8,11 +8,12 @@ services:
     env_file: emu2mqtt.env
     environment:
       - MQTT_PW_FILE=/run/secrets/mqtt_password
-      - TZ=America/Los_Angeles
     image: emu2mqtt:latest
     restart: unless-stopped
     volumes:
       - /run/udev:/run/udev:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
     group_add:
       - dialout
     user: 997:997
