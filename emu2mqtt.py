@@ -9,6 +9,8 @@ import json
 import argparse
 import re
 
+SUPPORTED_TAGS = ["InstantaneousDemand", "CurrentSummationDelivered", "ConnectionStatus"]
+
 # Runtime globals
 device_id = None
 currently_online = False
@@ -114,17 +116,17 @@ def set_current_state(new_state: bool):
     global currently_online
     if currently_online != new_state:
         status = "online" if new_state else "offline"
-        logging.info(f"State switching to {status}")
+        logging.info("State switching to %s", status)
         mqttc.publish("rainforest/status", status, args.mqtt_qos)
         currently_online = new_state
 
 def send_update(data: str):
     global device_id
-    logging.debug("Parsing: " + data)
+    logging.debug("Parsing: %s", data)
     try:
         xml = ETree.fromstring(data)
     except:
-        logging.exception("failed to parse XML: " + data)
+        logging.exception("failed to parse XML: %s", data)
         return
 
     match xml.tag:
@@ -204,27 +206,30 @@ while True:
         for line in data.splitlines(keepends=True):
             if is_parsing_message:
                 if re.match(tag, line):
-                    logging.debug("tag end: " + tag)
+                    logging.debug("tag end: %s", tag)
                     is_parsing_message = False
                     message += line
                     send_update(message)
                 else:
                     message += line
             else:
-                m = re.match("<(?P<tag>InstantaneousDemand|CurrentSummationDelivered|ConnectionStatus)>", line)
+                m = re.match(f"<(?P<tag>{'|'.join(SUPPORTED_TAGS)})>", line)
                 if m != None:
                     tag = f"</{m.group('tag')}>"
-                    logging.debug("Tag start: " + line.strip())
+                    logging.debug("Tag start: %s", line.strip())
                     is_parsing_message = True
                     message = line
-                elif is_substr("<InstantaneousDemand>", line) or is_substr("<CurrentSummationDelivered>", line) or is_substr("<ConnectionStatus>", line):
-                    logging.debug("Partial tag: " + line)
-                    partial_tag = line
-                    time.sleep(0.05)
+                else:
+                    for supported in SUPPORTED_TAGS:
+                        if is_substr(f"<{supported}>", line):
+                            logging.debug("Partial tag: %s", line)
+                            partial_tag = line
+                            time.sleep(0.05)
+                            break
 
         if is_parsing_message:
             # There's a partially collected message; save for the next iteration
-            logging.debug("partial msg: " + message)
+            logging.debug("partial msg: %s", message)
             data = message
             time.sleep(0.05)
         else:
