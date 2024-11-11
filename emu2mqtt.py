@@ -125,37 +125,42 @@ def send_update(data: str):
         logging.exception("failed to parse XML: " + data)
         return
 
-    if xml.tag == "InstantaneousDemand":
-        set_current_state(True)
-        device_id = xml.find("DeviceMacId").text
-        demand = int(xml.find("Demand").text, 16)
-        multiplier = int(xml.find("Multiplier").text, 16)
-        divisor = int(xml.find("Divisor").text, 16)
-        digitsRight = int(xml.find("DigitsRight").text, 16)
-        if divisor != 0:
-                mqttc.publish(
-                    "rainforest/instantaneousdemand",
-                    str(round(demand * multiplier / divisor, digitsRight)),
-                    args.mqtt_qos)
-    elif xml.tag == "CurrentSummationDelivered":
-        set_current_state(True)
-        device_id = xml.find("DeviceMacId").text
-        multiplier = int(xml.find("Multiplier").text, 16)
-        divisor = int(xml.find("Divisor").text, 16)
-        delivered = int(xml.find("SummationDelivered").text, 16)
-        delivered *= multiplier
-        delivered /= divisor
+    match xml.tag:
+        case "InstantaneousDemand":
+            set_current_state(True)
+            device_id = xml.find("DeviceMacId").text
+            demand = int(xml.find("Demand").text, 16)
+            multiplier = int(xml.find("Multiplier").text, 16)
+            divisor = int(xml.find("Divisor").text, 16)
+            digitsRight = int(xml.find("DigitsRight").text, 16)
+            if divisor != 0:
+                    mqttc.publish(
+                        "rainforest/instantaneousdemand",
+                        str(round(demand * multiplier / divisor, digitsRight)),
+                        args.mqtt_qos)
+        case "CurrentSummationDelivered":
+            set_current_state(True)
+            device_id = xml.find("DeviceMacId").text
+            multiplier = int(xml.find("Multiplier").text, 16)
+            divisor = int(xml.find("Divisor").text, 16)
+            delivered = int(xml.find("SummationDelivered").text, 16)
+            delivered *= multiplier
+            delivered /= divisor
 
-        received = int(xml.find("SummationReceived").text, 16)
-        received *= multiplier
-        received /= divisor
-        data = {"delivered":delivered, "received":received}
+            received = int(xml.find("SummationReceived").text, 16)
+            received *= multiplier
+            received /= divisor
+            data = {"delivered":delivered, "received":received}
 
-        mqttc.publish("rainforest/summationdelivered", json.dumps(data), args.mqtt_qos)
-    elif xml.tag == "ConnectionStatus":
-        device_id = xml.find("DeviceMacId").text
-        if xml.find("Status").text == "Rejoining":
-            set_current_state(False)
+            mqttc.publish("rainforest/summationdelivered", json.dumps(data), args.mqtt_qos)
+        case "ConnectionStatus":
+            device_id = xml.find("DeviceMacId").text
+            status = xml.find("Status").text
+            match status:
+                case "Rejoining":
+                    set_current_state(False)
+                case "Connected":
+                    set_current_state(True)
 
 
 args = parse_arguments()
